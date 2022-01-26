@@ -1,0 +1,60 @@
+- hosts: linux
+  gather_facts: no
+  vars:    # необходимо заполнить параметры в соответствии с данными диска
+    storage_dev: /dev/sdc   # имя устройства, для облака VMware sdb, для облака Huawei vdb
+    storage_pv: "{{ storage_dev }}1"
+    storage_vg: centos_centos  # имя желаемой volume группы
+    storage_lvol:     
+      - name: data      # имя желаемого логического раздела
+        size: 100%FREE
+        mount: '/data/nfs'  # желаемая точка монтирования
+    reset_dev: true
+  tasks:
+   - name: rescaning device # рескан устройств для определения нового диска в системе
+     shell: |
+       echo "- - -" > /sys/class/scsi_host/host0/scan
+       echo "- - -" > /sys/class/scsi_host/host1/scan
+       echo "- - -" > /sys/class/scsi_host/host2/scan
+ 
+   - name: create partition # создание партиции нового диска
+     parted:
+       number: 1
+       #label: gpt          # если нужна метка диска gpt, раскомментировать данный пункт
+       flags: [ lvm ]
+       state: present
+       device: "{{ storage_dev }}"
+       #become: yes
+ 
+#   - name: create volume group # создание группы логических дисков
+#     lvg:
+#       vg: "{{ storage_vg }}"
+#       pvs: "{{ storage_pv }}"
+  
+   - name: create lvm volumes # создание логических дисков
+     lvol:
+       vg: "{{ storage_vg }}"
+       lv: "{{ item.name }}"
+       size: "{{ item.size }}"
+     with_items: "{{ storage_lvol }}"
+ 
+   - name: make filesystems # создание файловой системы
+     filesystem:
+       fstype: ext4
+       resizefs: yes
+       dev: "/dev/{{ storage_vg }}/{{ item.name }}"
+     with_items: "{{ storage_lvol }}"
+ 
+   - name: create mount directories # создание директории для монтирования диска
+     file:
+       path: "{{ item.mount }}"
+       state: directory
+     with_items: "{{ storage_lvol }}"
+ 
+   - name: mount directories # монтирование диска, занесение записи в fstab
+     mount:
+       name: "{{ item.mount }}"
+       src: "/dev/{{ storage_vg }}/{{ item.name }}"
+       fstype: ext4
+       opts: defaults,relatime
+       state: mounted
+     with_items: "{{ storage_lvol }}"
